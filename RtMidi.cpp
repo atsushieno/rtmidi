@@ -3576,25 +3576,15 @@ WebMidiAccessShim::WebMidiAccessShim()
 
     window._juce_emscripten_internals_get_port_by_number = function( portNumber, isInput ) {
       var midi = window._juce_emscripten_internals_midi_access;
-      var ids = Object.keys( isInput ? midi.inputs : midi.outputs );
-      ids.sort();
-      var id = null;
-      for (var i = 0; i < ids.size; i++) {
-        console.log( "MIDI device " + ids[i] );
-        if ( i == portNumber ) {
-          id = ids[i];
-          break;
-        }
+      var devices = isInput ? midi.inputs : midi.outputs;
+      var i = 0;
+      for (var device of devices.values()) {
+        if ( i == portNumber )
+          return device;
+        i++;
       }
-      if( id == null ) {
-          console.log( "MIDI " + (isInput ? "input" : "output") + " device of portNumber " + portNumber + " is not found.");
-          return;
-      }
-      console.log( "MIDI device id: " + id);
-      if( isInput )
-        return midi.inputs[id].name;
-      else
-        return midi.outputs[id].name;
+      console.log( "MIDI " + (isInput ? "input" : "output") + " device of portNumber " + portNumber + " is not found.");
+      return null;
     };
 
     window._juce_emscripten_internals_waiting = true;
@@ -3616,12 +3606,20 @@ std::string WebMidiAccessShim::getPortName( unsigned int portNumber, bool isInpu
 {
   if( !checkWebMidiAvailability() )
     return "";
-  char *ret = nullptr;
-  MAIN_THREAD_EM_ASM({
+  char *ret = (char*) MAIN_THREAD_EM_ASM_INT({
     var port = window._juce_emscripten_internals_get_port_by_number($0, $1);
-    $2 = port != null ? port.name : null;
-  }, portNumber, isInput, ret);
-  return ret != nullptr ? ret : "";
+    if( port == null)
+      return null;
+    var length = lengthBytesUTF8(port.name) + 1;
+    var ret = _malloc(length);
+    stringToUTF8(port.name, ret, length);
+    return ret;
+  }, portNumber, isInput, &ret);
+  if (ret == nullptr)
+      return "";
+  std::string s = ret;
+  free(ret);
+  return s;
 }
 
 //*********************************************************************//
@@ -3659,9 +3657,9 @@ void MidiInWeb::openPort( unsigned int portNumber, const std::string &portName )
 
   // In Web MIDI API world, there is no step to open a port, but we have to register the input callback.
 
-  EM_ASM({
+  MAIN_THREAD_EM_ASM({
     // register event handler
-    var input = _juce_emscripten_internals_get_port_by_number($0, true);
+    var input = window._juce_emscripten_internals_get_port_by_number($0, true);
     input.onmidimessage = function(e) { $2( $3, e.data, e.data.size, e.timeStamp ); };
   }, portNumber, portName.c_str(), onMidiMessageProc, &inputData_);
   open_port_number = portNumber;
