@@ -3516,21 +3516,6 @@ void MidiOutJack :: sendMessage( const unsigned char *message, size_t size )
 
 #if defined(__WEB_MIDI_API__)
 
-bool checkWebMidiAvailability()
-{
-  return MAIN_THREAD_EM_ASM_INT({
-    if ( typeof _juce_emscripten_internals_waiting !== "undefined" && _juce_emscripten_internals_waiting ) {
-      console.log ( "Attempted to use Web MIDI API while it is being queried." );
-      return false;
-    }
-    if ( typeof _juce_emscripten_internals_midi_access === "undefined" || _juce_emscripten_internals_midi_access == null ) {
-      console.log ( "Attempted to use Web MIDI API while it already turned out to be unavailable." );
-      return false;
-    }
-    return true;
-  });
-}
-
 //*********************************************************************//
 //  API: WEB MIDI
 //  Class Definitions: WebMidiAccessShim
@@ -3546,35 +3531,78 @@ public:
 
 std::unique_ptr<WebMidiAccessShim> shim{nullptr};
 
+void ensureShim()
+{
+  if ( shim.get() != nullptr )
+    return;
+  shim.reset( new WebMidiAccessShim() );
+}
+
+bool checkWebMidiAvailability()
+{
+  ensureShim();
+
+  return MAIN_THREAD_EM_ASM_INT({
+    if ( typeof window._juce_emscripten_internals_waiting === "undefined" ) {
+      console.log ( "Attempted to use Web MIDI API without trying to open it." );
+      return false;
+    }
+    if ( window._juce_emscripten_internals_waiting ) {
+      console.log ( "Attempted to use Web MIDI API while it is being queried." );
+      return false;
+    }
+    if ( _juce_emscripten_internals_midi_access == null ) {
+      console.log ( "Attempted to use Web MIDI API while it already turned out to be unavailable." );
+      return false;
+    }
+    return true;
+  });
+}
+
 WebMidiAccessShim::WebMidiAccessShim()
 {
-  MAIN_THREAD_EM_ASM({
-    if( typeof _juce_emscripten_internals_midi_access !== "undefined" )
+  MAIN_THREAD_ASYNC_EM_ASM({
+    if( typeof window._juce_emscripten_internals_midi_access !== "undefined" )
       return;
-    if( typeof _juce_emscripten_internals_waiting !== "undefined" ) {
+    if( typeof window._juce_emscripten_internals_waiting !== "undefined" ) {
        console.log( "MIDI Access was requested while another request is in progress." );
        return;
     }
-    _juce_emscripten_internals_waiting = true;
-    window.requestMIDIAccess( {sysex = true} ).then( (midiAccess) => {
-      _juce_emscripten_internals_waiting = false;
+
+    // define functions
+    _juce_emscripten_internals_sleep = function( ms ) {
+      return new Promise( resolve => setTimeout( resolve, ms ) );
+    };
+
+    window._juce_emscripten_internals_get_port_by_number = function( portNumber, isInput ) {
+      var midi = window._juce_emscripten_internals_midi_access;
+      var ids = Object.keys( isInput ? midi.inputs : midi.outputs );
+      ids.sort();
+      var id = null;
+      for (var i = 0; i < ids.size; i++) {
+        console.log( "MIDI device " + ids[i] );
+        if ( i == portNumber ) {
+          id = ids[i];
+          break;
+        }
+      }
+      if( id == null ) {
+          console.log( "MIDI " + (isInput ? "input" : "output") + " device of portNumber " + portNumber + " is not found.");
+          return;
+      }
+      console.log( "MIDI device id: " + id);
+      if( isInput )
+        return midi.inputs[id].name;
+      else
+        return midi.outputs[id].name;
+    };
+
+    window._juce_emscripten_internals_waiting = true;
+    window.navigator.requestMIDIAccess( {"sysex": true} ).then( (midiAccess) => {
+      window._juce_emscripten_internals_midi_access = midiAccess;
+      window._juce_emscripten_internals_waiting = false;
       if( midiAccess == null ) {
         console.log ( "Could not get access to MIDI API" );
-      } else {
-        _juce_emscripten_internals_midi_access = midiAccess;
-        _juce_emscripten_internals_get_port_by_number = function(portNumber, isInput) {
-          var midi = _juce_emscripten_internals_midi_access;
-          var ids = Object.keys( isInput ? midi.inputs : midi.outputs );
-          ids.sort();
-          var id = null;
-          for (int i = 0; i < ids.size; i++) {
-            if ( i == $0 ) {
-              id = ids[i];
-              break;
-            }
-          }
-          return ( isInput ? midi.inputs : midi.outputs ) [id].name;
-        };
       }
     });
   });
@@ -3582,10 +3610,6 @@ WebMidiAccessShim::WebMidiAccessShim()
 
 WebMidiAccessShim::~WebMidiAccessShim()
 {
-  MAIN_THREAD_EM_ASM({
-    _juce_emscripten_internal_waiting = false;
-    _juce_emscripten_internal_midi_access = null;
-  });
 }
 
 std::string WebMidiAccessShim::getPortName( unsigned int portNumber, bool isInput )
@@ -3594,7 +3618,7 @@ std::string WebMidiAccessShim::getPortName( unsigned int portNumber, bool isInpu
     return "";
   char *ret = nullptr;
   MAIN_THREAD_EM_ASM({
-    var port = _juce_emscripten_internals_get_port_by_number($0, $1);
+    var port = window._juce_emscripten_internals_get_port_by_number($0, $1);
     $2 = port != null ? port.name : null;
   }, portNumber, isInput, ret);
   return ret != nullptr ? ret : "";
@@ -3635,7 +3659,7 @@ void MidiInWeb::openPort( unsigned int portNumber, const std::string &portName )
 
   // In Web MIDI API world, there is no step to open a port, but we have to register the input callback.
 
-  MAIN_THREAD_EM_ASM({
+  EM_ASM({
     // register event handler
     var input = _juce_emscripten_internals_get_port_by_number($0, true);
     input.onmidimessage = function(e) { $2( $3, e.data, e.data.size, e.timeStamp ); };
@@ -3697,9 +3721,7 @@ std::string MidiInWeb::getPortName( unsigned int portNumber )
 
 void MidiInWeb::initialize( const std::string& clientName )
 {
-  if ( shim.get() != nullptr )
-    return;
-  shim.reset( new WebMidiAccessShim() );
+  ensureShim();
   setClientName( clientName );
 }
 
