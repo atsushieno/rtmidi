@@ -3570,10 +3570,6 @@ WebMidiAccessShim::WebMidiAccessShim()
     }
 
     // define functions
-    _juce_emscripten_internals_sleep = function( ms ) {
-      return new Promise( resolve => setTimeout( resolve, ms ) );
-    };
-
     window._juce_emscripten_internals_get_port_by_number = function( portNumber, isInput ) {
       var midi = window._juce_emscripten_internals_midi_access;
       var devices = isInput ? midi.inputs : midi.outputs;
@@ -3801,8 +3797,7 @@ void MidiOutWeb::sendMessage( const unsigned char *message, size_t size )
       console.log( "Port #" + $0 + " could not be found.");
       return;
     }
-    // FIXME: how can we get byte array here?
-    var msg = UInt8Array ($1, $2);
+    var msg = new Uint8Array(Module.HEAPU8.buffer, $1, $2);
     output.send( msg );
   }, open_port_number, message, size);
 }
