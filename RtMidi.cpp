@@ -3543,15 +3543,15 @@ bool checkWebMidiAvailability()
   ensureShim();
 
   return MAIN_THREAD_EM_ASM_INT({
-    if ( typeof window._juce_emscripten_internals_waiting === "undefined" ) {
+    if ( typeof window._rtmidi_internals_waiting === "undefined" ) {
       console.log ( "Attempted to use Web MIDI API without trying to open it." );
       return false;
     }
-    if ( window._juce_emscripten_internals_waiting ) {
+    if ( window._rtmidi_internals_waiting ) {
       console.log ( "Attempted to use Web MIDI API while it is being queried." );
       return false;
     }
-    if ( _juce_emscripten_internals_midi_access == null ) {
+    if ( _rtmidi_internals_midi_access == null ) {
       console.log ( "Attempted to use Web MIDI API while it already turned out to be unavailable." );
       return false;
     }
@@ -3562,16 +3562,19 @@ bool checkWebMidiAvailability()
 WebMidiAccessShim::WebMidiAccessShim()
 {
   MAIN_THREAD_ASYNC_EM_ASM({
-    if( typeof window._juce_emscripten_internals_midi_access !== "undefined" )
+    if( typeof window._rtmidi_internals_midi_access !== "undefined" )
       return;
-    if( typeof window._juce_emscripten_internals_waiting !== "undefined" ) {
+    if( typeof window._rtmidi_internals_waiting !== "undefined" ) {
        console.log( "MIDI Access was requested while another request is in progress." );
        return;
     }
 
     // define functions
-    window._juce_emscripten_internals_get_port_by_number = function( portNumber, isInput ) {
-      var midi = window._juce_emscripten_internals_midi_access;
+    window._rtmidi_internals_on_midi_message_proc = Module.cwrap(
+      'rtmidi_onMidiMessageProc', 'void', ['number', 'number', 'number', 'number']);
+
+    window._rtmidi_internals_get_port_by_number = function( portNumber, isInput ) {
+      var midi = window._rtmidi_internals_midi_access;
       var devices = isInput ? midi.inputs : midi.outputs;
       var i = 0;
       for (var device of devices.values()) {
@@ -3583,10 +3586,10 @@ WebMidiAccessShim::WebMidiAccessShim()
       return null;
     };
 
-    window._juce_emscripten_internals_waiting = true;
+    window._rtmidi_internals_waiting = true;
     window.navigator.requestMIDIAccess( {"sysex": true} ).then( (midiAccess) => {
-      window._juce_emscripten_internals_midi_access = midiAccess;
-      window._juce_emscripten_internals_waiting = false;
+      window._rtmidi_internals_midi_access = midiAccess;
+      window._rtmidi_internals_waiting = false;
       if( midiAccess == null ) {
         console.log ( "Could not get access to MIDI API" );
       }
@@ -3603,7 +3606,7 @@ std::string WebMidiAccessShim::getPortName( unsigned int portNumber, bool isInpu
   if( !checkWebMidiAvailability() )
     return "";
   char *ret = (char*) MAIN_THREAD_EM_ASM_INT({
-    var port = window._juce_emscripten_internals_get_port_by_number($0, $1);
+    var port = window._rtmidi_internals_get_port_by_number($0, $1);
     if( port == null)
       return null;
     var length = lengthBytesUTF8(port.name) + 1;
@@ -3634,14 +3637,25 @@ MidiInWeb::~MidiInWeb( void )
   closePort();
 }
 
-void onMidiMessageProc( MidiInApi::RtMidiInData *data, void* midiInWeb, uint8_t* inputBytes, int32_t length, double domHighResTimeStamp )
+void onMidiMessageProc( MidiInApi::RtMidiInData *data, uint8_t* inputBytes, int32_t length, double domHighResTimeStamp )
 {
+  MAIN_THREAD_EM_ASM({
+      console.log( "rtmidi onMidiMessageProc()");
+      console.log( "  length: " + $0);
+      console.log( "  domHighResTimeStamp: " + $1);
+  }, length, domHighResTimeStamp);
+
   auto &message = data->message;
   message.bytes.resize(message.bytes.size() + length);
   memcpy(message.bytes.data(), inputBytes, length);
   // FIXME: handle timestamp
   RtMidiIn::RtMidiCallback callback = (RtMidiIn::RtMidiCallback) data->userCallback;
   callback( message.timeStamp, &message.bytes, data->userData );
+}
+
+extern "C" void EMSCRIPTEN_KEEPALIVE rtmidi_onMidiMessageProc( double data, double inputBytes, double length, double domHighResTimeStamp )
+{
+  onMidiMessageProc( (MidiInApi::RtMidiInData*) (void*) (int64_t) data, (uint8_t*) (void*) (int64_t) inputBytes, (int32_t) length, domHighResTimeStamp);
 }
 
 void MidiInWeb::openPort( unsigned int portNumber, const std::string &portName )
@@ -3655,9 +3669,11 @@ void MidiInWeb::openPort( unsigned int portNumber, const std::string &portName )
 
   MAIN_THREAD_EM_ASM({
     // register event handler
-    var input = window._juce_emscripten_internals_get_port_by_number($0, true);
-    input.onmidimessage = function(e) { $2( $3, e.data, e.data.size, e.timeStamp ); };
-  }, portNumber, portName.c_str(), onMidiMessageProc, &inputData_);
+    var input = window._rtmidi_internals_get_port_by_number($0, true);
+    input.onmidimessage = function(e) {
+        window._rtmidi_internals_on_midi_message_proc( $2, e.data, e.data.size, e.timeStamp );
+    };
+  }, portNumber, portName.c_str(), &inputData_);
   open_port_number = portNumber;
 }
 
@@ -3675,7 +3691,7 @@ void MidiInWeb::closePort( void )
     return;
 
   MAIN_THREAD_EM_ASM({
-    var input = _juce_emscripten_internals_get_port_by_number($0, true);
+    var input = _rtmidi_internals_get_port_by_number($0, true);
     if( input == null ) {
       console.log( "Port #" + $0 + " could not be found.");
       return;
@@ -3703,7 +3719,7 @@ unsigned int MidiInWeb::getPortCount( void )
 {
   if( !checkWebMidiAvailability() )
     return 0;
-  return MAIN_THREAD_EM_ASM_INT( { return _juce_emscripten_internals_midi_access.inputs.size; } );
+  return MAIN_THREAD_EM_ASM_INT( { return _rtmidi_internals_midi_access.inputs.size; } );
 }
 
 std::string MidiInWeb::getPortName( unsigned int portNumber )
@@ -3776,7 +3792,7 @@ unsigned int MidiOutWeb::getPortCount( void )
 {
   if( !checkWebMidiAvailability() )
     return 0;
-  return MAIN_THREAD_EM_ASM_INT( { return _juce_emscripten_internals_midi_access.outputs.size; } );
+  return MAIN_THREAD_EM_ASM_INT( { return _rtmidi_internals_midi_access.outputs.size; } );
 }
 
 std::string MidiOutWeb::getPortName( unsigned int portNumber )
@@ -3792,7 +3808,7 @@ void MidiOutWeb::sendMessage( const unsigned char *message, size_t size )
     return;
 
   MAIN_THREAD_EM_ASM({
-    var output = _juce_emscripten_internals_get_port_by_number($0, true);
+    var output = _rtmidi_internals_get_port_by_number($0, true);
     if( output == null ) {
       console.log( "Port #" + $0 + " could not be found.");
       return;
