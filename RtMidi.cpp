@@ -1,4 +1,3 @@
-#define __WEB_MIDI_API__ 1
 /**********************************************************************/
 /*! \class RtMidi
     \brief An abstract base class for realtime MIDI input/output.
