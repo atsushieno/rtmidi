@@ -3556,7 +3556,7 @@ bool checkWebMidiAvailability()
       return false;
     }
     return true;
-  });
+  } );
 }
 
 WebMidiAccessShim::WebMidiAccessShim()
@@ -3590,8 +3590,8 @@ WebMidiAccessShim::WebMidiAccessShim()
       if( midiAccess == null ) {
         console.log ( "Could not get access to MIDI API" );
       }
-    });
-  });
+    } );
+  } );
 }
 
 WebMidiAccessShim::~WebMidiAccessShim()
@@ -3610,7 +3610,7 @@ std::string WebMidiAccessShim::getPortName( unsigned int portNumber, bool isInpu
     var ret = _malloc(length);
     stringToUTF8(port.name, ret, length);
     return ret;
-  }, portNumber, isInput, &ret);
+  }, portNumber, isInput, &ret );
   if (ret == nullptr)
       return "";
   std::string s = ret;
@@ -3684,7 +3684,7 @@ void MidiInWeb::closePort( void )
     }
     // unregister event handler
     input.onmidimessage = null;
-  }, open_port_number);
+  }, open_port_number );
   open_port_number = -1;
 }
 
@@ -3801,7 +3801,7 @@ void MidiOutWeb::sendMessage( const unsigned char *message, size_t size )
     }
     var msg = new Uint8Array(Module.HEAPU8.buffer, $1, $2);
     output.send( msg );
-  }, open_port_number, message, size);
+  }, open_port_number, message, size );
 }
 
 void MidiOutWeb::initialize( const std::string& clientName )
