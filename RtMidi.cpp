@@ -3799,12 +3799,14 @@ void MidiOutWeb::sendMessage( const unsigned char *message, size_t size )
     return;
 
   MAIN_THREAD_EM_ASM( {
-    var output = _rtmidi_internals_get_port_by_number($0, true);
+    var output = _rtmidi_internals_get_port_by_number( $0, false );
     if( output == null ) {
       console.log( "Port #" + $0 + " could not be found.");
       return;
     }
-    var msg = new Uint8Array(Module.HEAPU8.buffer, $1, $2);
+    var buf = new ArrayBuffer ($2);
+    var msg = new Uint8Array( buf );
+    msg.set( new Uint8Array( Module.HEAPU8.buffer.slice( $1, $1 + $2 ) ) );
     output.send( msg );
   }, open_port_number, message, size );
 }
