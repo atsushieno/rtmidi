@@ -1,3 +1,4 @@
+#define __WEB_MIDI_API__ 1
 /**********************************************************************/
 /*! \class RtMidi
     \brief An abstract base class for realtime MIDI input/output.
@@ -3586,6 +3587,7 @@ WebMidiAccessShim::WebMidiAccessShim()
     window._rtmidi_internals_waiting = true;
     window.navigator.requestMIDIAccess( {"sysex": true} ).then( (midiAccess) => {
       window._rtmidi_internals_midi_access = midiAccess;
+      window._rtmidi_internals_latest_message_timestamp = 0.0;
       window._rtmidi_internals_waiting = false;
       if( midiAccess == null ) {
         console.log ( "Could not get access to MIDI API" );
@@ -3657,7 +3659,11 @@ void MidiInWeb::openPort( unsigned int portNumber, const std::string &portName )
     // In Web MIDI API world, there is no step to open a port, but we have to register the input callback instead.
     var input = window._rtmidi_internals_get_port_by_number($0, true);
     input.onmidimessage = function(e) {
-      Module.ccall( 'rtmidi_onMidiMessageProc', 'void', ['number', 'array', 'number', 'number'], [$1, e.data, e.data.length, e.timeStamp] );
+      // In RtMidi world, timestamps are delta time from previous message, while in Web MIDI world
+      // timestamps are relative to window creation time (i.e. kind of absolute time with window "epoch" time).
+      var rtmidiTimestamp = window._rtmidi_internals_latest_message_timestamp == 0.0 ? 0.0 : e.timeStamp - window._rtmidi_internals_latest_message_timestamp;
+      window._rtmidi_internals_latest_message_timestamp = e.timeStamp;
+      Module.ccall( 'rtmidi_onMidiMessageProc', 'void', ['number', 'array', 'number', 'number'], [$1, e.data, e.data.length, rtmidiTimestamp] );
     };
   }, portNumber, &inputData_ );
   open_port_number = portNumber;
